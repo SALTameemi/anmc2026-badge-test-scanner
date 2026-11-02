@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en" dir="ltr"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ANMC 2026 — Badge Test</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"></script>
+<style>
+  :root{--navy:#12356b;--ok:#0a7d33;--warn:#b26a00;--red:#c0392b;--line:#2E3440;}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:"Segoe UI",system-ui,sans-serif;background:#0f131a;color:#fff;}
+  header{background:var(--navy);padding:14px 16px;text-align:center}
+  header h1{margin:0;font-size:16px;font-weight:700}
+  header p{margin:3px 0 0;font-size:12px;color:#aebfe0}
+  .wrap{max-width:520px;margin:0 auto;padding:14px}
+  .card{background:#1a1f29;border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+  input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:#232a36;color:#fff;font:inherit;margin-bottom:10px}
+  button{width:100%;padding:13px;border:none;border-radius:12px;background:var(--navy);color:#fff;font-weight:700;font:inherit;cursor:pointer}
+  #reader{width:100%;border-radius:12px;overflow:hidden}
+  .result{border-radius:14px;padding:26px 16px;text-align:center;margin-bottom:14px;display:none}
+  .result.show{display:block;animation:pop .25s ease}
+  @keyframes pop{from{transform:scale(.95);opacity:.4}to{transform:scale(1);opacity:1}}
+  .result .big{font-size:52px;line-height:1;margin-bottom:8px}
+  .result .verdict{font-size:26px;font-weight:900;letter-spacing:1px;margin:2px 0}
+  .result .nm{font-size:19px;font-weight:700;margin:6px 0 2px}
+  .result .id{font-size:13px;opacity:.85;letter-spacing:.5px}
+  .result .sub{font-size:13px;margin-top:8px;opacity:.9}
+  .r-ok{background:#0e3d20;border:2px solid var(--ok)}
+  .r-already{background:#4a3410;border:2px solid var(--warn)}
+  .r-no{background:#4a1515;border:2px solid var(--red)}
+  .prog .ptop{font-size:15px;text-align:center;margin-bottom:10px}
+  .prog .ptop b{color:#7fd6a0;font-size:20px}
+  .prog .bar{height:16px;background:#232a36;border-radius:10px;overflow:hidden}
+  .prog .fill{height:100%;width:0;background:linear-gradient(90deg,#0a7d33,#3ac07a);transition:width .5s ease}
+  .prog .pbot{font-size:12.5px;color:#9AA4B2;text-align:center;margin-top:9px}
+  .prog .pbot b{color:#fff}
+  .counts{display:flex;gap:10px;margin-top:10px}
+  .counts div{flex:1;text-align:center;background:#232a36;border:1px solid var(--line);border-radius:10px;padding:8px}
+  .counts .n{font-size:20px;font-weight:800}.counts .l{font-size:11px;color:#9AA4B2}
+  .counts .pass .n{color:#7fd6a0}.counts .dup .n{color:#f0c674}.counts .fail .n{color:#ff8e8e}
+  .manual{display:flex;gap:8px}.manual input{margin:0}.manual button{width:auto;padding:12px 16px}
+  .muted{color:#9AA4B2;font-size:12px;text-align:center;margin-top:6px}
+</style></head>
+<body>
+<header>
+  <h1>ANMC 2026 — Badge Test Scanner</h1>
+  <p>Scan each badge to check its QR works</p>
+</header>
+
+<div class="wrap">
+
+  <div class="card prog">
+    <div class="ptop"><b id="pTested">—</b> of <span id="pTotal">—</span> badges tested</div>
+    <div class="bar"><div id="barFill" class="fill"></div></div>
+    <div class="pbot">Remaining <b id="pRemain">—</b></div>
+    <div class="counts">
+      <div class="pass"><div class="n" id="cPass">0</div><div class="l">PASS</div></div>
+      <div class="dup"><div class="n" id="cDup">0</div><div class="l">ALREADY</div></div>
+      <div class="fail"><div class="n" id="cFail">0</div><div class="l">FAIL</div></div>
+    </div>
+  </div>
+
+  <div class="result" id="result"></div>
+
+  <div class="card">
+    <div id="reader"></div>
+    <div class="muted" id="camMsg">Point the camera at the badge QR</div>
+  </div>
+
+  <div class="card">
+    <div class="manual">
+      <input id="manual" placeholder="Or type the registration ID">
+      <button id="manualBtn">Test</button>
+    </div>
+    <div class="muted" style="text-align:left">PASS = the ID was found and marked tested. FAIL = the code didn't match any badge.</div>
+  </div>
+
+</div>
+
+<script>
+const CFG={
+  URL:"https://xmdkvxzflbbdnkwsggjm.supabase.co",
+  ANON:"sb_publishable_5UXQ_sYU5KOnRob11-ic1g_VtjUhXP8"
+};
+const $=id=>document.getElementById(id);
+let busy=false, lastCode="", lastAt=0, passN=0, failN=0, dupN=0;
+function api(path,opts={}){
+  opts.headers=Object.assign({apikey:CFG.ANON,Authorization:'Bearer '+CFG.ANON,'Content-Type':'application/json'},opts.headers||{});
+  return fetch(CFG.URL+'/'+path,opts);
+}
+function esc(s){return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));}
+function beep(ok){
+  try{const a=new (window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator();const g=a.createGain();
+    o.connect(g);g.connect(a.destination);o.frequency.value=ok?880:300;g.gain.value=.15;o.start();setTimeout(()=>{o.stop();a.close();},ok?140:340);}catch(_){}
+  if(navigator.vibrate)navigator.vibrate(ok?80:[90,60,90]);
+}
+function showResult(cls,big,verdict,nm,id,sub){
+  const r=$('result'); r.className='result show '+cls;
+  r.innerHTML='<div class="big">'+big+'</div><div class="verdict">'+verdict+'</div>'+
+    (nm?'<div class="nm">'+esc(nm)+'</div>':'')+(id?'<div class="id">'+esc(id)+'</div>':'')+
+    (sub?'<div class="sub">'+esc(sub)+'</div>':'');
+}
+
+/* progress */
+let ST={total:0,tested:0};
+function renderStats(){
+  const t=ST.total||0,c=ST.tested||0,rem=Math.max(t-c,0);
+  $('pTested').textContent=c; $('pTotal').textContent=t||'—'; $('pRemain').textContent=t?rem:'—';
+  $('barFill').style.width=(t?Math.round(c/t*100):0)+'%';
+}
+async function refreshStats(){
+  try{const r=await api('rest/v1/rpc/test_stats',{method:'POST',body:'{}'});const d=await r.json();
+    if(r.ok&&d){ST.total=d.total||0;ST.tested=d.tested||0;renderStats();}}catch(_){}
+}
+
+async function test(code){
+  code=(code||'').trim(); if(!code||busy)return;
+  const now=Date.now(); if(code===lastCode && now-lastAt<2500)return; lastCode=code;lastAt=now;
+  busy=true;
+  try{
+    const r=await api('rest/v1/rpc/test_badge',{method:'POST',body:JSON.stringify({p_code:code})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.message||d.hint||'Error');
+    if(d.status==='pass'){
+      passN++; $('cPass').textContent=passN;
+      ST.tested=(ST.tested||0)+1; renderStats();
+      showResult('r-ok','✅','PASS',d.name||'',d.id,'Badge QR works — marked as tested'); beep(true);
+    }else if(d.status==='already'){
+      dupN++; $('cDup').textContent=dupN;
+      const when=d.at?new Date(d.at).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'';
+      showResult('r-already','⚠️','ALREADY TESTED',d.name||'',d.id,'This badge was already tested'+(when?' — '+when:'')); beep(false);
+    }else{
+      failN++; $('cFail').textContent=failN;
+      showResult('r-no','❌','FAIL','',code,'This code is not in the database'); beep(false);
+    }
+  }catch(ex){
+    failN++; $('cFail').textContent=failN;
+    showResult('r-no','❌','FAIL',code,'','Error — '+String(ex.message)); beep(false);
+  }finally{ busy=false; }
+}
+$('manualBtn').onclick=()=>{ test($('manual').value); $('manual').value=''; };
+$('manual').addEventListener('keydown',e=>{if(e.key==='Enter')$('manualBtn').click();});
+
+/* camera */
+function startCam(){
+  const q=new Html5Qrcode("reader"); window.__qr=q;
+  q.start({facingMode:"environment"},{fps:10,qrbox:{width:230,height:230}},
+    txt=>test(txt), ()=>{}
+  ).then(()=>{$('camMsg').textContent='Ready — point the camera at the QR';})
+   .catch(e=>{$('camMsg').textContent='Could not open the camera (open over HTTPS). You can type the ID instead.';});
+}
+refreshStats();
+startCam();
+</script>
+</body></html>
